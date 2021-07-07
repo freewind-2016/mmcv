@@ -4,6 +4,8 @@ from abc import ABCMeta
 
 import torch.nn as nn
 
+from mmcv import ConfigDict
+
 
 class BaseModule(nn.Module, metaclass=ABCMeta):
     """Base module for all modules in openmmlab."""
@@ -20,10 +22,9 @@ class BaseModule(nn.Module, metaclass=ABCMeta):
 
         super(BaseModule, self).__init__()
         # define default value of init_cfg instead of hard code
-        # in init_weigt() function
+        # in init_weight() function
         self._is_init = False
-        if init_cfg is not None:
-            self.init_cfg = init_cfg
+        self.init_cfg = init_cfg
 
         # Backward compatibility in derived classes
         # if pretrained is not None:
@@ -35,19 +36,55 @@ class BaseModule(nn.Module, metaclass=ABCMeta):
     def is_init(self):
         return self._is_init
 
-    def init_weight(self):
+    def init_weights(self):
         """Initialize the weights."""
         from ..cnn import initialize
 
         if not self._is_init:
-
-            if hasattr(self, 'init_cfg'):
+            if self.init_cfg:
                 initialize(self, self.init_cfg)
-                self._is_init = True
-            for module in self.children():
-                if 'init_weight' in dir(module):
-                    module.init_weight()
+                if isinstance(self.init_cfg, (dict, ConfigDict)):
+                    # Avoid the parameters of the pre-training model
+                    # being overwritten by the init_weights
+                    # of the children.
+                    if self.init_cfg['type'] == 'Pretrained':
+                        return
 
+            for m in self.children():
+                if hasattr(m, 'init_weights'):
+                    m.init_weights()
+            self._is_init = True
         else:
-            warnings.warn('This module has bee initialized, \
-                please call initialize(module, init_cfg) to reinitialize it')
+            warnings.warn(f'init_weights of {self.__class__.__name__} has '
+                          f'been called more than once.')
+
+    def __repr__(self):
+        s = super().__repr__()
+        if self.init_cfg:
+            s += f'\ninit_cfg={self.init_cfg}'
+        return s
+
+
+class Sequential(BaseModule, nn.Sequential):
+    """Sequential module in openmmlab.
+
+    Args:
+        init_cfg (dict, optional): Initialization config dict.
+    """
+
+    def __init__(self, *args, init_cfg=None):
+        BaseModule.__init__(self, init_cfg)
+        nn.Sequential.__init__(self, *args)
+
+
+class ModuleList(BaseModule, nn.ModuleList):
+    """ModuleList in openmmlab.
+
+    Args:
+        modules (iterable, optional): an iterable of modules to add.
+        init_cfg (dict, optional): Initialization config dict.
+    """
+
+    def __init__(self, modules=None, init_cfg=None):
+        BaseModule.__init__(self, init_cfg)
+        nn.ModuleList.__init__(self, modules)
